@@ -60,6 +60,7 @@ services:
       JWT_SECRET: ${JWT_SECRET:-}
       TESTCASE_MANAGER_URL: http://testcase-manager:8000
       GATEWAY_TIMEOUT: 600
+      CORS_ALLOWED_ORIGINS: '["http://localhost", "http://localhost:3000", "http://localhost:80"]'
     volumes: *common-volumes
     networks: *common-networks
     depends_on:
