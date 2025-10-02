@@ -216,12 +216,7 @@ services:
 
   # TestCase Tool (Standalone Mode)
   testcase-tool-standalone:
-    build:
-      context: ../testcase-generator-ui
-      dockerfile: Dockerfile
-      args:
-        REACT_APP_GOOGLE_CLIENT_ID: ${REACT_APP_GOOGLE_CLIENT_ID:-}
-        REACT_APP_TOOL_URL: "/"
+    image: aiqualitica/testcase-tool-standalone:latest
     container_name: testcase-tool-standalone
     # No external ports - only accessible via nginx
     networks:
