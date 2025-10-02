@@ -1,0 +1,298 @@
+# Common environment variables using YAML anchors
+x-common-env: &common-env
+  DEBUG: ${DEBUG:-false}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  LOG_FORMAT: ${LOG_FORMAT:-json}
+  STRUCTURED_LOGGING: ${STRUCTURED_LOGGING:-true}
+  CORRELATION_ENABLED: ${CORRELATION_ENABLED:-true}
+  REQUEST_ID_ENABLED: ${REQUEST_ID_ENABLED:-true}
+  USER_ID_ENABLED: ${USER_ID_ENABLED:-true}
+  SLOW_REQUEST_THRESHOLD_MS: ${SLOW_REQUEST_THRESHOLD_MS:-1000}
+  PERFORMANCE_LOGGING: ${PERFORMANCE_LOGGING:-true}
+  LOG_TO_ELK: ${LOG_TO_ELK:-false}
+  # LLM Configuration
+  LLM_TYPE: ${LLM_TYPE:-openai}
+  LLM_DEPLOYMENT_TYPE: ${LLM_DEPLOYMENT_TYPE:-api}
+  LLM_MODEL_PATH: ${LLM_MODEL_PATH:-gpt-4o }
+  LLM_API_KEY: ${LLM_API_KEY:-}
+  # Common service URLs
+  TESTCASE_DB_SERVICE_URL: http://testcase-db-service:8000
+  REQUIREMENT_SERVICE_URL: http://requirement-service:8000
+  EVENT_QUEUE_MANAGER_URL: http://event-queue-manager:8001
+  LLM_SERVICE_URL: http://llm-service:8000
+  VECTOR_STORE_URL: http://qdrant:6333
+  TCM_INTEGRATOR_SERVICE_URL: http://tcm-integrator-service:8004
+  DOCUMENT_PREPROCESSOR_URL: http://document-preprocessor:8000
+  IAM_SERVICE_URL: http://iam-service:8000
+  SUBSCRIPTION_SERVICE_URL: http://subscription-service:8000
+
+# Common volumes
+x-common-volumes: &common-volumes
+  - ./logs:/var/log
+
+# Common networks
+x-common-networks: &common-networks
+  - testcase-network
+
+services:
+  # TestCase Manager Service
+  testcase-manager:
+    image: testcase-manager-svc:secure
+    ports:
+      - "${TESTCASE_MANAGER_PORT:-8000}:8000"
+    environment:
+      <<: *common-env
+      LOG_FILE: ${LOG_FILE:-/var/log/testcase-manager.log}
+      EVENT_QUEUE_URL: http://event-queue-manager:8001
+    volumes: *common-volumes
+    networks: *common-networks
+    depends_on:
+      - testcase-db-service
+
+  # API Layer Service
+  api-gw-service:
+    image: api-gw-service:secure
+    ports:
+      - "${API_LAYER_PORT:-8001}:8000"
+    environment:
+      <<: *common-env
+      LOG_FILE: ${LOG_FILE:-/var/log/api-gw-service.log}
+      JWT_SECRET: ${JWT_SECRET:-}
+      TESTCASE_MANAGER_URL: http://testcase-manager:8000
+      GATEWAY_TIMEOUT: 600
+    volumes: *common-volumes
+    networks: *common-networks
+    depends_on:
+      - testcase-manager
+      - requirement-service
+      - tcm-integrator-service
+
+  # LLM Service
+  llm-service:
+    image: llm-service:latest
+    ports:
+      - "${LLM_SERVICE_PORT:-8002}:8000"
+    environment:
+      <<: *common-env
+      PYTHONDONTWRITEBYTECODE: 1
+      LOG_FILE: ${LOG_FILE:-/var/log/llm-service.log}
+      TESTCASE_MANAGER_URL: http://testcase-manager:8000
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USER: neo4j
+      NEO4J_PASSWORD: password
+      WEBSEARCH_SERVICE_URL: ""
+      BRAVE_SEARCH_API_KEY: ""
+      API_SERVICE_URL: http://api-gw-service:8000
+      LLM_INFERENCE_ENGINE_URL: http://llm-service:8000
+      GRAPH_DB_URL: bolt://neo4j:7687
+      GRAPH_DB_BOLT_URL: bolt://neo4j:7687
+      DATABASE_URL: postgresql+asyncpg://postgres:password@postgres:5432/testcase_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: testcase_db
+      REDIS_HOST: redis
+      NEO4J_AUTH: neo4j/password
+      GRAPH_DB_USER: neo4j
+      GRAPH_DB_PASSWORD: password
+      CHROMA_HOST: qdrant
+      VECTOR_STORE_API_KEY: ""
+    volumes:
+      - ./logs:/var/log
+      - ../llm-service/models:/app/models
+    networks: *common-networks
+    depends_on:
+      - qdrant
+      - neo4j
+
+  # TestCase DB Service
+  testcase-db-service:
+    image: testcase-db-service:secure
+    ports:
+      - "${TESTCASE_DB_SERVICE_PORT:-8003}:8000"
+    environment:
+      <<: *common-env
+      LOG_FILE: ${LOG_FILE:-/var/log/testcase-db-service.log}
+      DATABASE_URL: postgresql+asyncpg://postgres:password@postgres:5432/testcase_db
+    volumes: *common-volumes
+    networks: *common-networks
+    depends_on:
+      - postgres
+
+  # TCM Integrator Service
+  tcm-integrator-service:
+    image: tcm-integrator-service:secure
+    ports:
+      - "${TCM_INTEGRATOR_SERVICE_PORT:-8008}:8004"
+    environment:
+      <<: *common-env
+      LOG_FILE: ${LOG_FILE:-/var/log/tcm-integrator-service.log}
+      EXTERNAL_SERVICE_TIMEOUT: ${EXTERNAL_SERVICE_TIMEOUT:-30}
+    volumes: *common-volumes
+    networks: *common-networks
+    depends_on:
+      - testcase-db-service
+
+  # IAM Service
+  iam-service:
+    image: iam-service:secure
+    ports:
+      - "${IAM_SERVICE_PORT:-8007}:8000"
+    environment:
+      <<: *common-env
+      LOG_FILE: ${LOG_FILE:-/var/log/iam-service.log}
+      JWT_SECRET: ${JWT_SECRET:-}
+      JWT_ISSUER: ${JWT_ISSUER:-iam.testcase-platform}
+      JWT_AUDIENCE: ${JWT_AUDIENCE:-testcase-platform}
+      JWT_TTL_SECONDS: ${JWT_TTL_SECONDS:-1800}
+      JWT_LEEWAY_SECONDS: ${JWT_LEEWAY_SECONDS:-30}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI:-http://localhost/api/v1/auth/oauth/google/callback}
+      GENERIC_EMAIL_DOMAINS: ${GENERIC_EMAIL_DOMAINS:-gmail.com,yahoo.com,outlook.com,hotmail.com,protonmail.com}
+      DEPLOYMENT_MODE: ${DEPLOYMENT_MODE:-embedded}
+    volumes: *common-volumes
+    networks: *common-networks
+    depends_on:
+      - testcase-db-service
+
+  # Requirement Service
+  requirement-service:
+    image: requirement-service:secure
+    ports:
+      - "${REQUIREMENT_SERVICE_PORT:-8004}:8000"
+    environment:
+      <<: *common-env
+      LOG_FILE: ${LOG_FILE:-/var/log/requirement-service.log}
+      EVENT_QUEUE_URL: http://event-queue-manager:8001
+      DB_SERVICE_URL: ${TESTCASE_DB_SERVICE_URL:-http://testcase-db-service:8000}
+    volumes: *common-volumes
+    networks: *common-networks
+
+  # Document Preprocessor Service
+  document-preprocessor:
+    image: document-preprocessor:secure
+    ports:
+      - "${DOCUMENT_PREPROCESSOR_PORT:-8005}:8000"
+    environment:
+      <<: *common-env
+      LOG_FILE: ${LOG_FILE:-/var/log/document-preprocessor.log}
+      LLM_SERVICE_TIMEOUT: ${LLM_SERVICE_TIMEOUT:-600}
+    volumes:
+      - ./logs:/var/log
+      - ./uploads:/app/uploads
+    networks: *common-networks
+
+  # Event Queue Manager Service
+  event-queue-manager:
+    image: event-queue-manager:secure
+    ports:
+      - "${EVENT_QUEUE_MANAGER_PORT:-8006}:8001"
+    environment:
+      <<: *common-env
+      LOG_FILE: ${LOG_FILE:-/var/log/event-queue-manager.log}
+      QUEUE_BACKEND: redis
+      REDIS_HOST: redis
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+    volumes: *common-volumes
+    networks: *common-networks
+    depends_on:
+      - rabbitmq
+      - redis
+  
+  # Main Nginx Proxy (Entry Point)
+  nginx-standalone:
+    image: nginx:alpine
+    container_name: nginx-standalone
+    ports:
+      - "${UI_PORT:-80}:80"
+      - "443:443"
+    depends_on:
+      - testcase-tool-standalone
+    networks:
+      - testcase-network
+    restart: unless-stopped
+    volumes:
+      - ./nginx.standalone.conf:/etc/nginx/conf.d/default.conf
+
+  # TestCase Tool (Standalone Mode)
+  testcase-tool-standalone:
+    build:
+      context: ../testcase-generator-ui
+      dockerfile: Dockerfile
+      args:
+        REACT_APP_GOOGLE_CLIENT_ID: ${REACT_APP_GOOGLE_CLIENT_ID:-}
+        REACT_APP_TOOL_URL: "/"
+    container_name: testcase-tool-standalone
+    # No external ports - only accessible via nginx
+    networks:
+      - testcase-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    depends_on:
+      - api-gw-service
+
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15
+    environment:
+      - POSTGRES_DB=testcase_db
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    networks:
+      - testcase-network
+
+  # RabbitMQ Message Queue
+  rabbitmq:
+    image: rabbitmq:3-management
+    environment:
+      - RABBITMQ_DEFAULT_USER=guest
+      - RABBITMQ_DEFAULT_PASS=guest
+    ports:
+      - "${RABBITMQ_PORT:-5672}:5672"
+      - "${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    networks:
+      - testcase-network
+
+  # Redis Service
+  redis:
+    image: redis:7.2-alpine
+    ports:
+      - "6379:6379"
+    networks:
+      - testcase-network
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "6333:6333"
+    networks:
+      - testcase-network
+
+  neo4j:
+    image: neo4j:5.19
+    ports:
+      - "7687:7687"
+      - "7474:7474"
+    environment:
+      - NEO4J_AUTH=neo4j/password
+    networks:
+      - testcase-network
+
+
+volumes:
+  postgres_data:
+  rabbitmq_data:
+
+networks:
+  testcase-network:
+    driver: bridge 
