@@ -37,7 +37,7 @@ x-common-networks: &common-networks
 services:
   # TestCase Manager Service
   testcase-manager:
-    image: testcase-manager-svc:secure
+    image: aiqualitica/testcase-manager:secure
     ports:
       - "${TESTCASE_MANAGER_PORT:-8000}:8000"
     environment:
@@ -51,7 +51,7 @@ services:
 
   # API Layer Service
   api-gw-service:
-    image: api-gw-service:secure
+    image: aiqualitica/api-gw-service:secure
     ports:
       - "${API_LAYER_PORT:-8001}:8000"
     environment:
@@ -69,7 +69,7 @@ services:
 
   # LLM Service
   llm-service:
-    image: llm-service:latest
+    image: aiqualitica/llm-service:latest
     ports:
       - "${LLM_SERVICE_PORT:-8002}:8000"
     environment:
@@ -106,7 +106,7 @@ services:
 
   # TestCase DB Service
   testcase-db-service:
-    image: testcase-db-service:secure
+    image: aiqualitica/testcase-db-service:secure
     ports:
       - "${TESTCASE_DB_SERVICE_PORT:-8003}:8000"
     environment:
@@ -120,7 +120,7 @@ services:
 
   # TCM Integrator Service
   tcm-integrator-service:
-    image: tcm-integrator-service:secure
+    image: aiqualitica/tcm-integrator-service:secure
     ports:
       - "${TCM_INTEGRATOR_SERVICE_PORT:-8008}:8004"
     environment:
@@ -134,7 +134,7 @@ services:
 
   # IAM Service
   iam-service:
-    image: iam-service:secure
+    image: aiqualitica/iam-service:secure
     ports:
       - "${IAM_SERVICE_PORT:-8007}:8000"
     environment:
@@ -157,7 +157,7 @@ services:
 
   # Requirement Service
   requirement-service:
-    image: requirement-service:secure
+    image: aiqualitica/requirement-service:secure
     ports:
       - "${REQUIREMENT_SERVICE_PORT:-8004}:8000"
     environment:
@@ -170,7 +170,7 @@ services:
 
   # Document Preprocessor Service
   document-preprocessor:
-    image: document-preprocessor:secure
+    image: aiqualitica/document-preprocessor:secure
     ports:
       - "${DOCUMENT_PREPROCESSOR_PORT:-8005}:8000"
     environment:
@@ -184,7 +184,7 @@ services:
 
   # Event Queue Manager Service
   event-queue-manager:
-    image: event-queue-manager:secure
+    image: aiqualitica/event-queue-manager:secure
     ports:
       - "${EVENT_QUEUE_MANAGER_PORT:-8006}:8001"
     environment:
