@@ -5,9 +5,12 @@ This folder contains everything you need to run the TestCase Generation Platform
 ## 📁 Files Included
 
 - `docker-compose_cpu_standalone.yml` - Docker Compose configuration for standalone deployment
+- `docker-compose_cpu_standalone_windows.yml` - Windows-specific Docker Compose configuration
 - `nginx.standalone.conf` - Nginx configuration for reverse proxy
 - `init_versioning_db.py` - Database initialization script
-- `setup_cluster.sh` - Automated setup script
+- `setup_cluster.sh` - Automated setup script (Linux/Mac)
+- `setup_cluster.bat` - Automated setup script (Windows)
+- `env.template` - Environment variables template
 - `README.md` - This documentation
 
 ## 🚀 Quick Start
@@ -19,13 +22,13 @@ This folder contains everything you need to run the TestCase Generation Platform
 
 ### 🔐 Required Setup (Before Running)
 
-**1. Create a `.env` file with these 4 essential variables:**
+**1. Create `.env` file from template:**
 ```bash
-# Create environment file
-touch .env
+# Copy the environment template
+cp env.template .env
 ```
 
-**2. Add these 4 required variables to `.env`:**
+**2. Edit the `.env` file and fill in these 4 required variables:**
 ```env
 # Google OAuth (get from: https://console.cloud.google.com/)
 GOOGLE_CLIENT_ID=your_google_client_id_here
@@ -44,10 +47,19 @@ LLM_API_KEY=your_openai_api_key_here
 - **JWT Secret:** Can be any string (e.g., "myapp123" or generate with `openssl rand -base64 32`)
 
 ### One-Command Setup
+
+**For Linux/Mac:**
 ```bash
 chmod +x setup_cluster.sh
 ./setup_cluster.sh
 ```
+
+**For Windows:**
+```cmd
+setup_cluster.bat
+```
+
+**Note:** The `env.template` file contains all necessary configuration options with sensible defaults. You only need to configure the 4 mandatory fields for basic functionality.
 
 This script will:
 1. ✅ Create Python virtual environment
