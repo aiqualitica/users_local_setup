@@ -1,5 +1,5 @@
-# TestCase Platform - Customer local setup (Windows)
-# Images: aiqualitica/aiqualitica:<service>-secure
+# TestCase Platform - Customer local setup (x86 / amd64)
+# Images: aiqualitica/aiqualitica:<service>-x86
 # Configure required secrets in .env (see env.template)
 
 x-common-env: &common-env
@@ -30,12 +30,15 @@ x-common-env: &common-env
   DOCUMENT_PREPROCESSOR_URL: http://document-preprocessor:8000
   IAM_SERVICE_URL: http://iam-service:8000
 
+x-common-volumes: &common-volumes
+  - ./logs:/var/log
+
 x-common-networks: &common-networks
   - testcase-network
 
 services:
   testcase-manager:
-    image: aiqualitica/aiqualitica:testcase-manager-svc-secure
+    image: aiqualitica/aiqualitica:testcase-manager-svc-x86
     pull_policy: if_not_present
     container_name: testcase-manager
     ports:
@@ -44,12 +47,13 @@ services:
       <<: *common-env
       LOG_FILE: ${LOG_FILE:-/var/log/testcase-manager.log}
       EVENT_QUEUE_URL: http://event-queue-manager:8001
+    volumes: *common-volumes
     networks: *common-networks
     depends_on:
       - testcase-db-service
 
   api-gw-service:
-    image: aiqualitica/aiqualitica:api-gw-service-secure
+    image: aiqualitica/aiqualitica:api-gw-service-x86
     pull_policy: if_not_present
     container_name: api-gw-service
     ports:
@@ -68,6 +72,7 @@ services:
       KEYCLOAK_BASE_URL: ${KEYCLOAK_BASE_URL:-http://keycloak:8080}
       KEYCLOAK_JWKS_CACHE_TTL: ${KEYCLOAK_JWKS_CACHE_TTL:-3600}
       REALM_MAPPING_CACHE_TTL: ${REALM_MAPPING_CACHE_TTL:-3600}
+    volumes: *common-volumes
     networks: *common-networks
     depends_on:
       - testcase-manager
@@ -77,7 +82,7 @@ services:
       - keycloak
 
   mcp-gateway:
-    image: aiqualitica/aiqualitica:mcp-gateway-secure
+    image: aiqualitica/aiqualitica:mcp-gateway-x86
     pull_policy: if_not_present
     container_name: mcp-gateway
     ports:
@@ -96,6 +101,7 @@ services:
       PYTHONUNBUFFERED: "1"
     volumes:
       - ./config/gateway.yaml:/etc/granite/config.yaml:ro
+      - ./logs:/var/log
     networks: *common-networks
     depends_on:
       - testcase-manager
@@ -109,7 +115,7 @@ services:
       start_period: 30s
 
   llm-service:
-    image: aiqualitica/aiqualitica:llm-service-secure
+    image: aiqualitica/aiqualitica:llm-service-x86
     pull_policy: if_not_present
     container_name: llm-service
     ports:
@@ -138,14 +144,15 @@ services:
       GRAPH_DB_PASSWORD: password
       CHROMA_HOST: weaviate
     volumes:
-      - models_volume:/app/models
+      - ./logs:/var/log
+      - ./models:/app/models
     networks: *common-networks
     depends_on:
       - weaviate
       - neo4j
 
   testcase-db-service:
-    image: aiqualitica/aiqualitica:testcase-db-service-secure
+    image: aiqualitica/aiqualitica:testcase-db-service-x86
     pull_policy: if_not_present
     container_name: testcase-db-service
     ports:
@@ -154,12 +161,13 @@ services:
       <<: *common-env
       LOG_FILE: ${LOG_FILE:-/var/log/testcase-db-service.log}
       DATABASE_URL: postgresql+asyncpg://postgres:password@postgres:5432/testcase_db
+    volumes: *common-volumes
     networks: *common-networks
     depends_on:
       - postgres
 
   tcm-integrator-service:
-    image: aiqualitica/aiqualitica:tcm-integrator-service-secure
+    image: aiqualitica/aiqualitica:tcm-integrator-service-x86
     pull_policy: if_not_present
     container_name: tcm-integrator-service
     ports:
@@ -168,12 +176,13 @@ services:
       <<: *common-env
       LOG_FILE: ${LOG_FILE:-/var/log/tcm-integrator-service.log}
       EXTERNAL_SERVICE_TIMEOUT: ${EXTERNAL_SERVICE_TIMEOUT:-30}
+    volumes: *common-volumes
     networks: *common-networks
     depends_on:
       - testcase-db-service
 
   iam-service:
-    image: aiqualitica/aiqualitica:iam-service-secure
+    image: aiqualitica/aiqualitica:iam-service-x86
     pull_policy: if_not_present
     container_name: iam-service
     ports:
@@ -203,13 +212,14 @@ services:
       KEYCLOAK_CLIENT_ROOT_URL: ${KEYCLOAK_CLIENT_ROOT_URL:-http://localhost}
       KEYCLOAK_CLIENT_REDIRECT_URIS: ${KEYCLOAK_CLIENT_REDIRECT_URIS:-http://localhost/auth/callback,http://localhost:3000/auth/callback,http://localhost:80/auth/callback}
       KEYCLOAK_CLIENT_WEB_ORIGINS: ${KEYCLOAK_CLIENT_WEB_ORIGINS:-http://localhost,http://localhost:3000}
+    volumes: *common-volumes
     networks: *common-networks
     depends_on:
       - testcase-db-service
       - keycloak
 
   requirement-service:
-    image: aiqualitica/aiqualitica:requirement-service-secure
+    image: aiqualitica/aiqualitica:requirement-service-x86
     pull_policy: if_not_present
     container_name: requirement-service
     ports:
@@ -219,10 +229,11 @@ services:
       LOG_FILE: ${LOG_FILE:-/var/log/requirement-service.log}
       EVENT_QUEUE_URL: http://event-queue-manager:8001
       DB_SERVICE_URL: http://testcase-db-service:8000
+    volumes: *common-volumes
     networks: *common-networks
 
   document-preprocessor:
-    image: aiqualitica/aiqualitica:document-preprocessor-secure
+    image: aiqualitica/aiqualitica:document-preprocessor-x86
     pull_policy: if_not_present
     container_name: document-preprocessor
     ports:
@@ -232,11 +243,12 @@ services:
       LOG_FILE: ${LOG_FILE:-/var/log/document-preprocessor.log}
       LLM_SERVICE_TIMEOUT: ${LLM_SERVICE_TIMEOUT:-600}
     volumes:
-      - uploads_volume:/app/uploads
+      - ./logs:/var/log
+      - ./uploads:/app/uploads
     networks: *common-networks
 
   event-queue-manager:
-    image: aiqualitica/aiqualitica:event-queue-manager-secure
+    image: aiqualitica/aiqualitica:event-queue-manager-x86
     pull_policy: if_not_present
     container_name: event-queue-manager
     ports:
@@ -247,6 +259,7 @@ services:
       QUEUE_BACKEND: redis
       REDIS_HOST: redis
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+    volumes: *common-volumes
     networks: *common-networks
     depends_on:
       - rabbitmq
@@ -267,7 +280,7 @@ services:
       - ./nginx.standalone.conf:/etc/nginx/conf.d/default.conf
 
   testcase-tool-standalone:
-    image: aiqualitica/aiqualitica:testcase-tool-standalone-secure
+    image: aiqualitica/aiqualitica:testcase-tool-standalone-x86
     pull_policy: if_not_present
     container_name: testcase-tool-standalone
     networks: *common-networks
@@ -343,7 +356,7 @@ services:
     networks: *common-networks
 
   keycloak:
-    image: aiqualitica/aiqualitica:keycloak-secure
+    image: aiqualitica/aiqualitica:keycloak-x86
     pull_policy: if_not_present
     container_name: keycloak
     command: start-dev
@@ -398,8 +411,7 @@ services:
         apt-get update -qq &&
         apt-get install -y -qq curl >/dev/null 2>&1 &&
         pip install -q httpx >/dev/null 2>&1 &&
-        chmod +x /setup.sh &&
-        /setup.sh || exit 1
+        sh /setup.sh || exit 1
       "
     networks: *common-networks
     depends_on:
@@ -411,8 +423,6 @@ volumes:
   postgres_data:
   rabbitmq_data:
   weaviate_data:
-  uploads_volume:
-  models_volume:
 
 networks:
   testcase-network:
