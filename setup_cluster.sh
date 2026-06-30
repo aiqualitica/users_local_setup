@@ -138,9 +138,10 @@ docker-compose -f docker-compose_cpu_standalone.yml ps
 
 echo ""
 print_info "🌐 Access your application at: http://localhost"
+print_info "🔐 Keycloak Admin: http://localhost:8090"
 print_info "📊 RabbitMQ Management: http://localhost:15672"
 print_info "🗄️  Neo4j Browser: http://localhost:7474"
-print_info "🔍 Qdrant Dashboard: http://localhost:6333/dashboard"
+print_info "🔍 Weaviate: http://localhost:8082"
 
 echo ""
 print_status "Setup completed successfully! 🚀"

@@ -1,4 +1,7 @@
-# Common environment variables using YAML anchors
+# TestCase Platform - Customer local setup (Windows)
+# Images: aiqualitica/aiqualitica:<service>-secure
+# Configure required secrets in .env (see env.template)
+
 x-common-env: &common-env
   DEBUG: ${DEBUG:-false}
   LOG_LEVEL: ${LOG_LEVEL:-INFO}
@@ -10,67 +13,105 @@ x-common-env: &common-env
   SLOW_REQUEST_THRESHOLD_MS: ${SLOW_REQUEST_THRESHOLD_MS:-1000}
   PERFORMANCE_LOGGING: ${PERFORMANCE_LOGGING:-true}
   LOG_TO_ELK: ${LOG_TO_ELK:-false}
-  # LLM Configuration
+  IS_EMBEDDED: false
   LLM_TYPE: ${LLM_TYPE:-openai}
   LLM_DEPLOYMENT_TYPE: ${LLM_DEPLOYMENT_TYPE:-api}
-  LLM_MODEL_PATH: ${LLM_MODEL_PATH:-gpt-4o }
+  LLM_MODEL_PATH: ${LLM_MODEL_PATH:-gpt-4.1}
   LLM_API_KEY: ${LLM_API_KEY:-}
-  # Common service URLs
+  MAX_TOKENS: ${MAX_TOKENS:-4096}
+  CTX: ${CTX:-32768}
+  VLLM_BASE_URL: ${VLLM_BASE_URL:-http://vllm-service:8000/v1}
   TESTCASE_DB_SERVICE_URL: http://testcase-db-service:8000
   REQUIREMENT_SERVICE_URL: http://requirement-service:8000
   EVENT_QUEUE_MANAGER_URL: http://event-queue-manager:8001
   LLM_SERVICE_URL: http://llm-service:8000
-  VECTOR_STORE_URL: http://qdrant:6333
+  VECTOR_STORE_URL: http://weaviate:8080
   TCM_INTEGRATOR_SERVICE_URL: http://tcm-integrator-service:8004
   DOCUMENT_PREPROCESSOR_URL: http://document-preprocessor:8000
   IAM_SERVICE_URL: http://iam-service:8000
-  SUBSCRIPTION_SERVICE_URL: http://subscription-service:8000
 
-# Common volumes
-x-common-volumes: &common-volumes
-  - ./logs:/var/log
-
-# Common networks
 x-common-networks: &common-networks
   - testcase-network
 
 services:
-  # TestCase Manager Service
   testcase-manager:
-    image: aiqualitica/testcase-manager:secure
+    image: aiqualitica/aiqualitica:testcase-manager-svc-secure
+    pull_policy: if_not_present
+    container_name: testcase-manager
     ports:
-      - "${TESTCASE_MANAGER_PORT:-8000}:8000"
+      - "${TESTCASE_MANAGER_PORT:-8007}:8000"
     environment:
       <<: *common-env
       LOG_FILE: ${LOG_FILE:-/var/log/testcase-manager.log}
       EVENT_QUEUE_URL: http://event-queue-manager:8001
-    # volumes: *common-volumes  # Temporarily disabled due to Windows Docker volume issue
     networks: *common-networks
     depends_on:
       - testcase-db-service
 
-  # API Layer Service
   api-gw-service:
-    image: aiqualitica/api-gw-service:secure
+    image: aiqualitica/aiqualitica:api-gw-service-secure
+    pull_policy: if_not_present
+    container_name: api-gw-service
     ports:
-      - "${API_LAYER_PORT:-8001}:8000"
+      - "${API_LAYER_PORT:-8000}:8000"
     environment:
       <<: *common-env
       LOG_FILE: ${LOG_FILE:-/var/log/api-gw-service.log}
-      JWT_SECRET: ${JWT_SECRET:-}
+      JWT_SECRET: ${JWT_SECRET:-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}
+      JWT_ISSUER: ${JWT_ISSUER:-iam.testcase-platform}
+      JWT_AUDIENCE: ${JWT_AUDIENCE:-testcase-platform}
+      JWT_LEEWAY_SECONDS: 30
       TESTCASE_MANAGER_URL: http://testcase-manager:8000
       GATEWAY_TIMEOUT: 600
-      CORS_ALLOWED_ORIGINS: '["http://localhost", "http://localhost:3000", "http://localhost:80", "http://localhost:8001", "http://localhost:8007"]'
-    # volumes: *common-volumes  # Temporarily disabled due to Windows Docker volume issue
+      CORS_ALLOWED_ORIGINS: '["http://localhost", "http://localhost:3000", "http://localhost:80"]'
+      REDIRECT_URL: ${REDIRECT_URL:-/}
+      KEYCLOAK_BASE_URL: ${KEYCLOAK_BASE_URL:-http://keycloak:8080}
+      KEYCLOAK_JWKS_CACHE_TTL: ${KEYCLOAK_JWKS_CACHE_TTL:-3600}
+      REALM_MAPPING_CACHE_TTL: ${REALM_MAPPING_CACHE_TTL:-3600}
     networks: *common-networks
     depends_on:
       - testcase-manager
       - requirement-service
       - tcm-integrator-service
+      - iam-service
+      - keycloak
 
-  # LLM Service
+  mcp-gateway:
+    image: aiqualitica/aiqualitica:mcp-gateway-secure
+    pull_policy: if_not_present
+    container_name: mcp-gateway
+    ports:
+      - "${CONTEXTFORGE_GATEWAY_PORT:-8080}:8080"
+    environment:
+      <<: *common-env
+      LOG_FILE: /var/log/mcp-gateway.log
+      JWT_SECRET: ${JWT_SECRET:-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}
+      JWT_ISSUER: ${JWT_ISSUER:-iam.testcase-platform}
+      JWT_AUDIENCE: ${JWT_AUDIENCE:-testcase-platform}
+      JWT_LEEWAY_SECONDS: ${JWT_LEEWAY_SECONDS:-30}
+      MCP_SERVER_URL: ${MCP_SERVER_URL:-http://testcase-manager:8000}
+      KEYCLOAK_BASE_URL: ${KEYCLOAK_BASE_URL:-http://keycloak:8080}
+      KEYCLOAK_JWKS_CACHE_TTL: ${KEYCLOAK_JWKS_CACHE_TTL:-3600}
+      REALM_MAPPING_CACHE_TTL: ${REALM_MAPPING_CACHE_TTL:-3600}
+      PYTHONUNBUFFERED: "1"
+    volumes:
+      - ./config/gateway.yaml:/etc/granite/config.yaml:ro
+    networks: *common-networks
+    depends_on:
+      - testcase-manager
+      - iam-service
+      - keycloak
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; s = socket.socket(); result = s.connect_ex(('localhost', 8080)); s.close(); exit(0 if result == 0 else 1)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
   llm-service:
-    image: aiqualitica/llm-service:latest
+    image: aiqualitica/aiqualitica:llm-service-secure
+    pull_policy: if_not_present
+    container_name: llm-service
     ports:
       - "${LLM_SERVICE_PORT:-8002}:8000"
     environment:
@@ -95,98 +136,109 @@ services:
       NEO4J_AUTH: neo4j/password
       GRAPH_DB_USER: neo4j
       GRAPH_DB_PASSWORD: password
-      CHROMA_HOST: qdrant
-      VECTOR_STORE_API_KEY: ""
+      CHROMA_HOST: weaviate
     volumes:
-      - logs_volume:/var/log
       - models_volume:/app/models
     networks: *common-networks
     depends_on:
-      - qdrant
+      - weaviate
       - neo4j
 
-  # TestCase DB Service
   testcase-db-service:
-    image: aiqualitica/testcase-db-service:secure
+    image: aiqualitica/aiqualitica:testcase-db-service-secure
+    pull_policy: if_not_present
+    container_name: testcase-db-service
     ports:
-      - "${TESTCASE_DB_SERVICE_PORT:-8003}:8000"
+      - "${TESTCASE_DB_SERVICE_PORT:-8004}:8000"
     environment:
       <<: *common-env
       LOG_FILE: ${LOG_FILE:-/var/log/testcase-db-service.log}
       DATABASE_URL: postgresql+asyncpg://postgres:password@postgres:5432/testcase_db
-    # volumes: *common-volumes  # Temporarily disabled due to Windows Docker volume issue
     networks: *common-networks
     depends_on:
       - postgres
 
-  # TCM Integrator Service
   tcm-integrator-service:
-    image: aiqualitica/tcm-integrator-service:secure
+    image: aiqualitica/aiqualitica:tcm-integrator-service-secure
+    pull_policy: if_not_present
+    container_name: tcm-integrator-service
     ports:
-      - "${TCM_INTEGRATOR_SERVICE_PORT:-8008}:8004"
+      - "${TCM_INTEGRATOR_SERVICE_PORT:-8005}:8004"
     environment:
       <<: *common-env
       LOG_FILE: ${LOG_FILE:-/var/log/tcm-integrator-service.log}
       EXTERNAL_SERVICE_TIMEOUT: ${EXTERNAL_SERVICE_TIMEOUT:-30}
-    # volumes: *common-volumes  # Temporarily disabled due to Windows Docker volume issue
     networks: *common-networks
     depends_on:
       - testcase-db-service
 
-  # IAM Service
   iam-service:
-    image: aiqualitica/iam-service:secure
+    image: aiqualitica/aiqualitica:iam-service-secure
+    pull_policy: if_not_present
+    container_name: iam-service
     ports:
-      - "${IAM_SERVICE_PORT:-8007}:8000"
+      - "${IAM_SERVICE_PORT:-8001}:8000"
     environment:
       <<: *common-env
-      LOG_FILE: ${LOG_FILE:-/var/log/iam-service.log}
-      JWT_SECRET: ${JWT_SECRET:-}
-      JWT_ISSUER: ${JWT_ISSUER:-iam.testcase-platform}
-      JWT_AUDIENCE: ${JWT_AUDIENCE:-testcase-platform}
-      JWT_TTL_SECONDS: ${JWT_TTL_SECONDS:-1800}
-      JWT_LEEWAY_SECONDS: ${JWT_LEEWAY_SECONDS:-30}
+      LOG_FILE: /var/log/iam-service.log
+      JWT_SECRET: ${JWT_SECRET:-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}
+      JWT_ISSUER: iam.testcase-platform
+      JWT_AUDIENCE: testcase-platform
+      JWT_TTL_SECONDS: 1800
+      JWT_LEEWAY_SECONDS: 30
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
       GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI:-http://localhost/api/v1/auth/oauth/google/callback}
-      GENERIC_EMAIL_DOMAINS: ${GENERIC_EMAIL_DOMAINS:-gmail.com,yahoo.com,outlook.com,hotmail.com,protonmail.com}
-      DEPLOYMENT_MODE: ${DEPLOYMENT_MODE:-embedded}
-      CORS_ALLOWED_ORIGINS: '["http://localhost", "http://localhost:3000", "http://localhost:80", "http://localhost:8001", "http://localhost:8007"]'
-    # volumes: *common-volumes  # Temporarily disabled due to Windows Docker volume issue
+      GENERIC_EMAIL_DOMAINS: gmail.com,yahoo.com,outlook.com,hotmail.com,protonmail.com
+      DEPLOYMENT_MODE: standalone
+      KEYCLOAK_BASE_URL: ${KEYCLOAK_BASE_URL:-http://keycloak:8080}
+      KEYCLOAK_PUBLIC_URL: ${KEYCLOAK_PUBLIC_URL:-http://localhost:8090}
+      KEYCLOAK_ADMIN_REALM: ${KEYCLOAK_ADMIN_REALM:-master}
+      KEYCLOAK_ADMIN_CLIENT_ID: ${KEYCLOAK_ADMIN_CLIENT_ID:-admin-cli}
+      KEYCLOAK_ADMIN_CLIENT_SECRET: ${KEYCLOAK_ADMIN_CLIENT_SECRET:-}
+      KEYCLOAK_ADMIN_USERNAME: ${KEYCLOAK_ADMIN_USERNAME:-admin}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
+      KEYCLOAK_DEFAULT_UI_CLIENT_ID: ${KEYCLOAK_DEFAULT_UI_CLIENT_ID:-aiqualitica-ui}
+      KEYCLOAK_DEFAULT_API_CLIENT_ID: ${KEYCLOAK_DEFAULT_API_CLIENT_ID:-aiqualitica-api}
+      KEYCLOAK_CLIENT_ROOT_URL: ${KEYCLOAK_CLIENT_ROOT_URL:-http://localhost}
+      KEYCLOAK_CLIENT_REDIRECT_URIS: ${KEYCLOAK_CLIENT_REDIRECT_URIS:-http://localhost/auth/callback,http://localhost:3000/auth/callback,http://localhost:80/auth/callback}
+      KEYCLOAK_CLIENT_WEB_ORIGINS: ${KEYCLOAK_CLIENT_WEB_ORIGINS:-http://localhost,http://localhost:3000}
     networks: *common-networks
     depends_on:
       - testcase-db-service
+      - keycloak
 
-  # Requirement Service
   requirement-service:
-    image: aiqualitica/requirement-service:secure
+    image: aiqualitica/aiqualitica:requirement-service-secure
+    pull_policy: if_not_present
+    container_name: requirement-service
     ports:
-      - "${REQUIREMENT_SERVICE_PORT:-8004}:8000"
+      - "${REQUIREMENT_SERVICE_PORT:-8003}:8000"
     environment:
       <<: *common-env
       LOG_FILE: ${LOG_FILE:-/var/log/requirement-service.log}
       EVENT_QUEUE_URL: http://event-queue-manager:8001
-      DB_SERVICE_URL: ${TESTCASE_DB_SERVICE_URL:-http://testcase-db-service:8000}
-    # volumes: *common-volumes  # Temporarily disabled due to Windows Docker volume issue
+      DB_SERVICE_URL: http://testcase-db-service:8000
     networks: *common-networks
 
-  # Document Preprocessor Service
   document-preprocessor:
-    image: aiqualitica/document-preprocessor:secure
+    image: aiqualitica/aiqualitica:document-preprocessor-secure
+    pull_policy: if_not_present
+    container_name: document-preprocessor
     ports:
-      - "${DOCUMENT_PREPROCESSOR_PORT:-8005}:8000"
+      - "${DOCUMENT_PREPROCESSOR_PORT:-8008}:8000"
     environment:
       <<: *common-env
       LOG_FILE: ${LOG_FILE:-/var/log/document-preprocessor.log}
       LLM_SERVICE_TIMEOUT: ${LLM_SERVICE_TIMEOUT:-600}
     volumes:
-      - logs_volume:/var/log
       - uploads_volume:/app/uploads
     networks: *common-networks
 
-  # Event Queue Manager Service
   event-queue-manager:
-    image: aiqualitica/event-queue-manager:secure
+    image: aiqualitica/aiqualitica:event-queue-manager-secure
+    pull_policy: if_not_present
+    container_name: event-queue-manager
     ports:
       - "${EVENT_QUEUE_MANAGER_PORT:-8006}:8001"
     environment:
@@ -195,13 +247,11 @@ services:
       QUEUE_BACKEND: redis
       REDIS_HOST: redis
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
-    # volumes: *common-volumes  # Temporarily disabled due to Windows Docker volume issue
     networks: *common-networks
     depends_on:
       - rabbitmq
       - redis
-  
-  # Main Nginx Proxy (Entry Point)
+
   nginx-standalone:
     image: nginx:alpine
     container_name: nginx-standalone
@@ -210,35 +260,27 @@ services:
       - "443:443"
     depends_on:
       - testcase-tool-standalone
-    networks:
-      - testcase-network
+      - mcp-gateway
+    networks: *common-networks
     restart: unless-stopped
     volumes:
-      - nginx_config_volume:/etc/nginx/conf.d
+      - ./nginx.standalone.conf:/etc/nginx/conf.d/default.conf
 
-  # TestCase Tool (Standalone Mode)
   testcase-tool-standalone:
-    image: aiqualitica/testcase-tool-standalone:latest
+    image: aiqualitica/aiqualitica:testcase-tool-standalone-secure
+    pull_policy: if_not_present
     container_name: testcase-tool-standalone
-    # No external ports - only accessible via nginx
-    environment:
-      API_GATEWAY_URL: http://api-gw-service:8000
-      IAM_SERVICE_URL: http://iam-service:8000
-      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
-      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
-      GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI:-http://localhost/api/v1/auth/oauth/google/callback}
-    networks:
-      - testcase-network
+    networks: *common-networks
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:80/"]
+      test: ["CMD", "curl", "-f", "http://localhost:3000/"]
       interval: 30s
       timeout: 10s
       retries: 3
     depends_on:
       - api-gw-service
+      - mcp-gateway
 
-  # PostgreSQL Database
   postgres:
     image: postgres:15
     environment:
@@ -247,12 +289,17 @@ services:
       - POSTGRES_PASSWORD=password
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init-keycloak-db.sh:/docker-entrypoint-initdb.d/01-init-keycloak-db.sh:ro
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
-    networks:
-      - testcase-network
+    networks: *common-networks
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d testcase_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
-  # RabbitMQ Message Queue
   rabbitmq:
     image: rabbitmq:3-management
     environment:
@@ -263,23 +310,28 @@ services:
       - "${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq
-    networks:
-      - testcase-network
+    networks: *common-networks
 
-  # Redis Service
   redis:
     image: redis:7.2-alpine
     ports:
       - "6379:6379"
-    networks:
-      - testcase-network
+    networks: *common-networks
 
-  qdrant:
-    image: qdrant/qdrant:latest
+  weaviate:
+    image: semitechnologies/weaviate:latest
     ports:
-      - "6333:6333"
-    networks:
-      - testcase-network
+      - "${WEAVIATE_PORT:-8082}:8080"
+    environment:
+      - QUERY_DEFAULTS_LIMIT=25
+      - AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED=true
+      - PERSISTENCE_DATA_PATH=/var/lib/weaviate
+      - DEFAULT_VECTORIZER_MODULE=none
+      - ENABLE_MODULES=text2vec-openai,text2vec-cohere,text2vec-huggingface,ref2vec-centroid,generative-openai,qna-openai
+      - CLUSTER_HOSTNAME=node1
+    volumes:
+      - weaviate_data:/var/lib/weaviate
+    networks: *common-networks
 
   neo4j:
     image: neo4j:5.19
@@ -288,18 +340,80 @@ services:
       - "7474:7474"
     environment:
       - NEO4J_AUTH=neo4j/password
-    networks:
-      - testcase-network
+    networks: *common-networks
 
+  keycloak:
+    image: aiqualitica/aiqualitica:keycloak-secure
+    pull_policy: if_not_present
+    container_name: keycloak
+    command: start-dev
+    environment:
+      - KEYCLOAK_ADMIN=admin
+      - KEYCLOAK_ADMIN_PASSWORD=${KEYCLOAK_ADMIN_PASSWORD:-admin}
+      - KC_DB=postgres
+      - KC_DB_URL=jdbc:postgresql://postgres:5432/keycloak
+      - KC_DB_USERNAME=postgres
+      - KC_DB_PASSWORD=password
+      - KC_HOSTNAME_STRICT=false
+      - KC_HOSTNAME_STRICT_HTTPS=false
+      - KC_HTTP_ENABLED=true
+      - KC_HEALTH_ENABLED=true
+      - KC_HTTP_PORT=8080
+      - KC_HTTPS_PORT=8443
+      - KC_PROXY=edge
+      - KC_PROXY_ADDRESS_FORWARDING=true
+      - KC_EVENTS_LISTENER=aiqualitica-user-onboarding
+      - KC_EVENTS_LISTENER_AIQUALITICA_USER_ONBOARDING_IAM_SERVICE_URL=http://iam-service:8000
+      - KC_EVENTS_LISTENER_AIQUALITICA_USER_ONBOARDING_IAM_SERVICE_ENDPOINT=/api/v1/internal/iam/keycloak-event
+      - KC_EVENTS_ADMIN_ENABLED=true
+      - KC_EVENTS_ADMIN_SAVE=true
+    ports:
+      - "${KEYCLOAK_PORT:-8090}:8080"
+    networks: *common-networks
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/health/ready"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  keycloak-one-time-setup:
+    image: python:3.11-slim
+    container_name: keycloak-one-time-setup
+    environment:
+      - KEYCLOAK_BASE_URL=http://keycloak:8080
+      - KEYCLOAK_ADMIN_USERNAME=${KEYCLOAK_ADMIN_USERNAME:-admin}
+      - KEYCLOAK_ADMIN_PASSWORD=${KEYCLOAK_ADMIN_PASSWORD:-admin}
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET:-}
+    volumes:
+      - ./scripts/keycloak-one-time-setup.sh:/setup.sh:ro
+      - ./scripts:/app/scripts:ro
+    command: >
+      sh -c "
+        apt-get update -qq &&
+        apt-get install -y -qq curl >/dev/null 2>&1 &&
+        pip install -q httpx >/dev/null 2>&1 &&
+        chmod +x /setup.sh &&
+        /setup.sh || exit 1
+      "
+    networks: *common-networks
+    depends_on:
+      keycloak:
+        condition: service_healthy
+    restart: "no"
 
 volumes:
   postgres_data:
   rabbitmq_data:
-  logs_volume:
+  weaviate_data:
   uploads_volume:
   models_volume:
-  nginx_config_volume:
 
 networks:
   testcase-network:
-    driver: bridge 
+    driver: bridge
