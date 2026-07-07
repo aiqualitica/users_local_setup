@@ -3,6 +3,7 @@
 Database initialization script with versioning schema
 """
 
+import argparse
 import os
 import sys
 import psycopg2
@@ -23,7 +24,8 @@ DB_CONFIG = {
 }
 
 class DatabaseInitializer:
-    def __init__(self):
+    def __init__(self, recreate: bool = False):
+        self.recreate = recreate
         self.connection = None
         self.cursor = None
     
@@ -49,6 +51,16 @@ class DatabaseInitializer:
             logger.error(f"SQL: {sql}")
             raise
     
+    def schema_exists(self) -> bool:
+        """Return True if the core schema has already been initialized."""
+        self.cursor.execute("""
+            SELECT EXISTS (
+                SELECT 1 FROM information_schema.tables
+                WHERE table_schema = 'public' AND table_name = 'tenants'
+            );
+        """)
+        return self.cursor.fetchone()[0]
+
     def drop_existing_tables(self):
         """Drop existing tables"""
         logger.info("🗑️  Dropping existing tables...")
@@ -641,7 +653,19 @@ class DatabaseInitializer:
             self.connect()
             # Ensure pgcrypto extension exists for gen_random_uuid()
             self.execute_sql("CREATE EXTENSION IF NOT EXISTS pgcrypto;", "Enabled pgcrypto")
-            self.drop_existing_tables()
+
+            if self.schema_exists():
+                if not self.recreate:
+                    logger.info(
+                        "✅ Schema already exists — skipping initialization "
+                        "(pass --recreate to drop and recreate all tables)"
+                    )
+                    return
+                logger.warning("⚠️  --recreate enabled: dropping existing tables...")
+                self.drop_existing_tables()
+            else:
+                logger.info("📋 Fresh database — creating schema...")
+
             self.create_tenants_table()
             self.create_requirement_labels_table()
             self.create_requirements_table()
@@ -697,10 +721,26 @@ class DatabaseInitializer:
             if self.connection:
                 self.connection.close()
 
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Initialize testcase_db schema (one-time setup via setup_cluster.sh)"
+    )
+    parser.add_argument(
+        "--recreate",
+        action="store_true",
+        default=False,
+        help="Drop and recreate all tables. Default: skip if schema already exists.",
+    )
+    return parser.parse_args()
+
+
 def main():
     """Main function"""
-    initializer = DatabaseInitializer()
+    args = parse_args()
+    recreate = args.recreate or os.getenv("DB_RECREATE", "").lower() in ("1", "true", "yes")
+    initializer = DatabaseInitializer(recreate=recreate)
     initializer.initialize_database()
+
 
 if __name__ == "__main__":
     main()

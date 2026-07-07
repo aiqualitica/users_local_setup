@@ -9,7 +9,7 @@
 # 5. Initialize database schema
 # 6. Display cluster status
 #
-# Usage: ./setup_cluster.sh [--platform x86|arm]
+# Usage: ./setup_cluster.sh [--platform x86|arm] [--recreate]
 
 set -e
 
@@ -28,6 +28,7 @@ print_warning() { echo -e "${YELLOW}⚠️  $1${NC}"; }
 print_error() { echo -e "${RED}❌ $1${NC}"; }
 
 ARCH_SUFFIX=""
+RECREATE_DB=false
 
 detect_platform() {
   case "$(uname -m)" in
@@ -52,10 +53,15 @@ while [[ $# -gt 0 ]]; do
       esac
       shift 2
       ;;
+    --recreate)
+      RECREATE_DB=true
+      shift
+      ;;
     -h|--help)
-      echo "Usage: $0 [--platform x86|arm]"
+      echo "Usage: $0 [--platform x86|arm] [--recreate]"
       echo "  x86  Intel/AMD64 (docker-compose_cpu_standalone_x86.yml)"
       echo "  arm  Apple Silicon / ARM64 (docker-compose_cpu_standalone_arm.yml)"
+      echo "  --recreate  Drop and recreate testcase_db schema (destructive)"
       echo "If --platform is omitted, architecture is auto-detected from uname -m."
       exit 0
       ;;
@@ -148,7 +154,12 @@ export DB_NAME=testcase_db
 export DB_USER=postgres
 export DB_PASSWORD=password
 
-python3 init_versioning_db.py
+if [ "$RECREATE_DB" = true ]; then
+  print_warning "Recreating database schema (all testcase_db data will be deleted)..."
+  python3 init_versioning_db.py --recreate
+else
+  python3 init_versioning_db.py
+fi
 
 if [ $? -eq 0 ]; then
   print_status "Database initialization completed successfully!"
