@@ -24,11 +24,52 @@ cp env.template .env
 | Type | Variable | Notes |
 |------|----------|-------|
 | Mandatory | `JWT_SECRET` | JWT signing secret (use a random value, e.g. `openssl rand -base64 32`). |
-| Mandatory | `LLM_API_KEY` | API key used by LLM service (OpenAI by default). |
+| Mandatory | `LLM_API_KEY` | API key for the selected cloud LLM provider (see below). |
+| Optional | `LLM_TYPE` | Provider/model family. Default: `openai`. |
+| Optional | `LLM_DEPLOYMENT_TYPE` | `api`, `togetherai`, `vllm`, or `local`. Default: `api`. |
+| Optional | `LLM_MODEL_PATH` | Cloud model id or local model path. Default: `gpt-4.1`. |
 | Optional | `GOOGLE_CLIENT_ID` | Needed only if Google login is required. |
 | Optional | `GOOGLE_CLIENT_SECRET` | Needed only if Google login is required. |
 
 Google keys are optional unless you explicitly enable Google login in Keycloak.
+
+### LLM provider quick setup
+
+Compose defaults to **OpenAI**. Switch provider by setting these in `.env`:
+
+**OpenAI**
+```bash
+LLM_DEPLOYMENT_TYPE=api
+LLM_TYPE=openai
+LLM_MODEL_PATH=gpt-4.1
+LLM_API_KEY=sk-...
+```
+
+**Anthropic (Claude)**
+```bash
+LLM_DEPLOYMENT_TYPE=api
+LLM_TYPE=anthropic
+LLM_MODEL_PATH=claude-sonnet-4-20250514
+LLM_API_KEY=sk-ant-...
+```
+
+**Google Gemini**
+```bash
+LLM_DEPLOYMENT_TYPE=api
+LLM_TYPE=gemini
+LLM_MODEL_PATH=gemini-2.0-flash
+LLM_API_KEY=your_gemini_api_key
+```
+
+**Together AI**
+```bash
+LLM_DEPLOYMENT_TYPE=togetherai
+LLM_TYPE=deepseek_v3
+LLM_MODEL_PATH=deepseek-ai/DeepSeek-V2.5
+LLM_API_KEY=your_together_api_key
+```
+
+Full matrix (vLLM, local models, prompt builders, troubleshooting): see [`../llm-service/README.md`](../llm-service/README.md).
 
 ## 1) Using setup script
 
