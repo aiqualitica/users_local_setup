@@ -30,6 +30,14 @@ cp env.template .env
 | Optional | `LLM_MODEL_PATH` | Cloud model id or local model path. Default: `gpt-4.1`. |
 | Optional | `GOOGLE_CLIENT_ID` | Needed only if Google login is required. |
 | Optional | `GOOGLE_CLIENT_SECRET` | Needed only if Google login is required. |
+| Optional | `CONTEXTFORGE_ADMIN_EMAIL` | ContextForge Admin login. Default: `admin@aiqualitica.local`. |
+| Optional | `CONTEXTFORGE_ADMIN_PASSWORD` | ContextForge Admin password. Default: `ChangeMe1!`. |
+| Optional | `CONTEXTFORGE_JWT_SECRET_KEY` | Signs ContextForge API JWTs. Default in `env.template`. |
+| Optional | `AUTH_ENCRYPTION_SECRET` | Encrypts MCP credentials in ContextForge DB. Default in `env.template`. |
+| Optional | `CONTEXTFORGE_SERVICE_TOKEN` | ContextForge API token (A2A/MCP). Default in `env.template`. |
+| Optional | `KEYCLOAK_ADMIN_USERNAME` | Keycloak admin user. Default: `admin`. |
+| Optional | `KEYCLOAK_ADMIN_PASSWORD` | Keycloak admin password. Default: `admin`. |
+| Optional | `KEYCLOAK_ADMIN_CLIENT_SECRET` | admin-cli secret (usually empty for local). |
 
 Google keys are optional unless you explicitly enable Google login in Keycloak.
 
@@ -127,7 +135,18 @@ python3 init_versioning_db.py --recreate
 - Tenant user (Account Console): `http://localhost:8090/realms/tenant-default/account`
 - Tenant admin (Admin Console for tenant realm): `http://localhost:8090/admin/master/console/#/tenant-default`
 
+Admin login defaults are in `env.template` (`KEYCLOAK_ADMIN_USERNAME` / `KEYCLOAK_ADMIN_PASSWORD`).
+
 If your realm name is different, replace `tenant-default` in the URLs above.
+
+### Login session (JWT cookie)
+
+IAM sets Keycloak `accessTokenLifespan` to **1800 seconds (30 min)** when it creates a tenant realm. That value drives the `aiq_session` cookie after login. Re-login once after realm create/update to pick up a new cookie.
+
+### ContextForge
+
+- Admin UI: `http://localhost:4444/admin`
+- Login defaults are in `env.template` (`CONTEXTFORGE_ADMIN_EMAIL` / `CONTEXTFORGE_ADMIN_PASSWORD`).
 
 ## Useful Commands
 
