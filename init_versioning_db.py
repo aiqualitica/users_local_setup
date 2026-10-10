@@ -69,6 +69,9 @@ class DatabaseInitializer:
             'usage',
             'subscriptions',
             'plans',
+            'optimization_executions',
+            'test_strategies',
+            'optimized_requirement_knowledge',
             'traceability_matrix',
             'tcm_testcase_mappings',
             'testcase_section_map',
@@ -397,7 +400,66 @@ class DatabaseInitializer:
         );
         """
         self.execute_sql(sql, "Created traceability matrix table")
-    
+
+    def create_optimization_tables(self):
+        """Create optimized knowledge, test strategy, and optimization execution tables."""
+        logger.info("Creating requirement optimization and test strategy tables...")
+        knowledge_sql = """
+        CREATE TABLE optimized_requirement_knowledge (
+            knowledge_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            requirement_id UUID NOT NULL,
+            tenant_id UUID NOT NULL REFERENCES tenants(tenant_id) ON DELETE CASCADE,
+            revision INTEGER NOT NULL,
+            knowledge JSON NOT NULL,
+            created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL,
+            updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL,
+            UNIQUE(tenant_id, requirement_id)
+        );
+        """
+        self.execute_sql(knowledge_sql, "Created optimized_requirement_knowledge table")
+        strategy_sql = """
+        CREATE TABLE test_strategies (
+            strategy_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            requirement_id UUID NOT NULL,
+            tenant_id UUID NOT NULL REFERENCES tenants(tenant_id) ON DELETE CASCADE,
+            revision INTEGER NOT NULL,
+            status TEXT NOT NULL CHECK (status IN ('proposed', 'confirmed')),
+            strategy JSON NOT NULL,
+            created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL,
+            updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL,
+            UNIQUE(tenant_id, requirement_id)
+        );
+        """
+        self.execute_sql(strategy_sql, "Created test_strategies table")
+        execution_sql = """
+        CREATE TABLE optimization_executions (
+            execution_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            requirement_id UUID NOT NULL,
+            tenant_id UUID NOT NULL REFERENCES tenants(tenant_id) ON DELETE CASCADE,
+            requirement_version INTEGER NOT NULL,
+            knowledge_revision INTEGER NOT NULL,
+            status TEXT NOT NULL CHECK (
+                status IN ('NOT_STARTED', 'RUNNING', 'WAITING_FOR_HIL', 'COMPLETED', 'FAILED')
+            ),
+            current_question_id TEXT,
+            coverage JSON NOT NULL,
+            active_requirement_id UUID,
+            created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL,
+            updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL,
+            UNIQUE(tenant_id, active_requirement_id),
+            CHECK (
+                (
+                    status IN ('NOT_STARTED', 'RUNNING', 'WAITING_FOR_HIL')
+                    AND active_requirement_id IS NOT NULL
+                ) OR (
+                    status IN ('COMPLETED', 'FAILED')
+                    AND active_requirement_id IS NULL
+                )
+            )
+        );
+        """
+        self.execute_sql(execution_sql, "Created optimization_executions table")
+
     def create_plans_table(self):
         """Create plans table for subscription management"""
         logger.info("📋 Creating plans table...")
@@ -525,6 +587,16 @@ class DatabaseInitializer:
             ("idx_traceability_matrix_requirement_id", "traceability_matrix(requirement_id)"),
             ("idx_traceability_matrix_version", "traceability_matrix(version)"),
             ("idx_traceability_matrix_status", "traceability_matrix(status)"),
+
+            # Optimization and test strategy
+            ("idx_opt_knowledge_requirement_id", "optimized_requirement_knowledge(requirement_id)"),
+            ("idx_opt_knowledge_tenant_id", "optimized_requirement_knowledge(tenant_id)"),
+            ("idx_test_strategies_requirement_id", "test_strategies(requirement_id)"),
+            ("idx_test_strategies_tenant_id", "test_strategies(tenant_id)"),
+            ("idx_test_strategies_status", "test_strategies(status)"),
+            ("idx_opt_exec_requirement_id", "optimization_executions(requirement_id)"),
+            ("idx_opt_exec_tenant_id", "optimization_executions(tenant_id)"),
+            ("idx_opt_exec_status", "optimization_executions(status)"),
             
             # Subscription Indexes
             ("idx_plans_name", "plans(name)"),
@@ -585,7 +657,12 @@ class DatabaseInitializer:
         self.execute_sql(trigger_function, "Created trigger function")
         
         # Create triggers
-        tables = ['requirement_labels', 'requirements', 'testcases', 'tenants', 'users', 'tcm_integrations', 'tcm_credentials', 'traceability_matrix', 'plans', 'subscriptions', 'usage']
+        tables = [
+            'requirement_labels', 'requirements', 'testcases', 'tenants', 'users',
+            'tcm_integrations', 'tcm_credentials', 'traceability_matrix',
+            'optimized_requirement_knowledge', 'test_strategies', 'optimization_executions',
+            'plans', 'subscriptions', 'usage',
+        ]
         for table in tables:
             sql = f"CREATE TRIGGER update_{table}_updated_at BEFORE UPDATE ON {table} FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();"
             self.execute_sql(sql, f"Created trigger for {table}")
@@ -644,6 +721,50 @@ class DatabaseInitializer:
         ON CONFLICT (name) DO NOTHING;
         """
         self.execute_sql(sql, "Created default subscription plans")
+
+    def create_automation_tables(self):
+        """Create automation tables, including the columns Analyse stores."""
+        logger.info("🤖 Creating automation domain tables...")
+        sql_path = os.path.normpath(os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            "..",
+            "testcase-db-service",
+            "scripts",
+            "add_automation_tables.sql",
+        ))
+        with open(sql_path, "r", encoding="utf-8") as handle:
+            sql = handle.read()
+        self.execute_sql(sql, "Created automation domain tables")
+        self.ensure_analyse_schema()
+
+    def ensure_analyse_schema(self):
+        """Columns Analyse stores on a step set and on an object locator."""
+        self.cursor.execute("""
+            SELECT EXISTS (
+                SELECT 1 FROM information_schema.tables
+                WHERE table_schema = 'public'
+                  AND table_name = 'structured_test_step_sets'
+            );
+        """)
+        if not self.cursor.fetchone()[0]:
+            logger.info("structured_test_step_sets is not present — Analyse schema was not created")
+            return
+        self.execute_sql(
+            """
+            ALTER TABLE structured_test_step_sets
+                ADD COLUMN IF NOT EXISTS deviation BOOLEAN NOT NULL DEFAULT FALSE;
+            ALTER TABLE structured_test_step_sets
+                ADD COLUMN IF NOT EXISTS meta_info JSONB;
+            ALTER TABLE application_objects
+                ADD COLUMN IF NOT EXISTS meta_info JSONB;
+            """,
+            "Ensured Analyse schema: deviation and meta_info",
+        )
+
+    def apply_schema_updates(self):
+        """Apply idempotent changes when the schema already exists."""
+        logger.info("🔧 Applying schema updates...")
+        self.create_automation_tables()
     
     def initialize_database(self):
         """Initialize complete database"""
@@ -657,9 +778,10 @@ class DatabaseInitializer:
             if self.schema_exists():
                 if not self.recreate:
                     logger.info(
-                        "✅ Schema already exists — skipping initialization "
+                        "✅ Schema already exists — applying incremental updates "
                         "(pass --recreate to drop and recreate all tables)"
                     )
+                    self.apply_schema_updates()
                     return
                 logger.warning("⚠️  --recreate enabled: dropping existing tables...")
                 self.drop_existing_tables()
@@ -682,9 +804,11 @@ class DatabaseInitializer:
             self.create_zephyr_projects_table()
             self.create_xray_projects_table()
             self.create_traceability_matrix_table()
+            self.create_optimization_tables()
             self.create_plans_table()
             self.create_subscriptions_table()
             self.create_usage_table()
+            self.create_automation_tables()
             self.create_indexes()
             self.create_triggers()
             self.create_views()
@@ -706,9 +830,14 @@ class DatabaseInitializer:
             logger.info("  - zephyr_projects")
             logger.info("  - xray_projects")
             logger.info("  - traceability_matrix")
+            logger.info("  - optimized_requirement_knowledge")
+            logger.info("  - test_strategies")
+            logger.info("  - optimization_executions")
             logger.info("  - plans (Subscription Management)")
             logger.info("  - subscriptions (Subscription Management)")
             logger.info("  - usage (Subscription Management)")
+            logger.info("  - structured_test_step_sets.deviation and meta_info (Analyse)")
+            logger.info("  - applications / application_objects / automation_definitions")
             logger.info("")
             logger.info("🔍 You can now start the application with versioning and subscription support!")
             
