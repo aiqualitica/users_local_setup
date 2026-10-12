@@ -1,0 +1,17 @@
+# Chat and multimodal routes. The model value is "<provider>/<model-id>".
+# LLM_API_KEY and MULTIMODAL_API_KEY come from .env and are not tied to one provider.
+# Pick the provider prefix from the list in README.md, then set the matching key.
+model_list:
+  - model_name: chat-model
+    litellm_params:
+      model: provider/your-chat-model
+      api_key: os.environ/LLM_API_KEY
+  - model_name: multimodal-model
+    litellm_params:
+      model: provider/your-multimodal-model
+      api_key: os.environ/MULTIMODAL_API_KEY
+litellm_settings:
+  drop_params: true
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  database_url: os.environ/DATABASE_URL

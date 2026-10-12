@@ -168,6 +168,9 @@ else
   exit 1
 fi
 
+print_info "Creating LiteLLM database if it is missing..."
+python3 scripts/create_litellm_db.py
+
 print_info "Step 8: Checking cluster status..."
 
 echo ""

@@ -1,6 +1,6 @@
 # TestCase Platform - Customer local setup (ARM / arm64)
 # Images: aiqualitica/aiqualitica:<service>-arm
-# Configure required secrets in .env (see env.template)
+# Configure required secrets in .env (copy from env.example)
 
 x-common-env: &common-env
   DEBUG: ${DEBUG:-false}
@@ -15,20 +15,20 @@ x-common-env: &common-env
   LOG_TO_ELK: ${LOG_TO_ELK:-false}
   IS_EMBEDDED: false
   LLM_TYPE: ${LLM_TYPE:-openai}
-  LLM_DEPLOYMENT_TYPE: ${LLM_DEPLOYMENT_TYPE:-api}
-  LLM_MODEL_PATH: ${LLM_MODEL_PATH:-gpt-4.1}
-  LLM_API_KEY: ${LLM_API_KEY:-}
   MAX_TOKENS: ${MAX_TOKENS:-4096}
+  REQUIREMENT_OUTPUT_MAX_TOKENS: ${REQUIREMENT_OUTPUT_MAX_TOKENS:-8192}
   CTX: ${CTX:-32768}
-  VLLM_BASE_URL: ${VLLM_BASE_URL:-http://vllm-service:8000/v1}
   TESTCASE_DB_SERVICE_URL: http://testcase-db-service:8000
   REQUIREMENT_SERVICE_URL: http://requirement-service:8000
   EVENT_QUEUE_MANAGER_URL: http://event-queue-manager:8001
   LLM_SERVICE_URL: http://llm-service:8000
+  TESTCASE_AUTOMATION_SERVICE_URL: http://testcase-automation-service:8000
   VECTOR_STORE_URL: http://weaviate:8080
   TCM_INTEGRATOR_SERVICE_URL: http://tcm-integrator-service:8004
   DOCUMENT_PREPROCESSOR_URL: http://document-preprocessor:8000
   IAM_SERVICE_URL: http://iam-service:8000
+  # Official ContextForge (outbound MCP connector) — not the custom HIL mcp-gateway
+  CONTEXTFORGE_URL: http://contextforge:4444
 
 x-common-networks: &common-networks
   - testcase-network
@@ -43,7 +43,6 @@ services:
     environment:
       <<: *common-env
       LOG_FILE: ${LOG_FILE:-/var/log/testcase-manager.log}
-      EVENT_QUEUE_URL: http://event-queue-manager:8001
     networks: *common-networks
     depends_on:
       - testcase-db-service
@@ -57,7 +56,7 @@ services:
     environment:
       <<: *common-env
       LOG_FILE: ${LOG_FILE:-/var/log/api-gw-service.log}
-      JWT_SECRET: ${JWT_SECRET:-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}
+      JWT_SECRET: ${JWT_SECRET}
       JWT_ISSUER: ${JWT_ISSUER:-iam.testcase-platform}
       JWT_AUDIENCE: ${JWT_AUDIENCE:-testcase-platform}
       JWT_LEEWAY_SECONDS: 30
@@ -65,6 +64,7 @@ services:
       GATEWAY_TIMEOUT: 600
       CORS_ALLOWED_ORIGINS: '["http://localhost", "http://localhost:3000", "http://localhost:80"]'
       REDIRECT_URL: ${REDIRECT_URL:-/}
+      HTTPS: ${HTTPS:-False}
       KEYCLOAK_BASE_URL: ${KEYCLOAK_BASE_URL:-http://keycloak:8080}
       KEYCLOAK_JWKS_CACHE_TTL: ${KEYCLOAK_JWKS_CACHE_TTL:-3600}
       REALM_MAPPING_CACHE_TTL: ${REALM_MAPPING_CACHE_TTL:-3600}
@@ -75,6 +75,7 @@ services:
       - tcm-integrator-service
       - iam-service
       - keycloak
+      - testcase-automation-service
 
   mcp-gateway:
     image: aiqualitica/aiqualitica:mcp-gateway-arm
@@ -85,11 +86,12 @@ services:
     environment:
       <<: *common-env
       LOG_FILE: /var/log/mcp-gateway.log
-      JWT_SECRET: ${JWT_SECRET:-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}
+      JWT_SECRET: ${JWT_SECRET}
       JWT_ISSUER: ${JWT_ISSUER:-iam.testcase-platform}
       JWT_AUDIENCE: ${JWT_AUDIENCE:-testcase-platform}
       JWT_LEEWAY_SECONDS: ${JWT_LEEWAY_SECONDS:-30}
       MCP_SERVER_URL: ${MCP_SERVER_URL:-http://testcase-manager:8000}
+      REQUIREMENT_MCP_SERVER_URL: ${REQUIREMENT_MCP_SERVER_URL:-http://requirement-service:8000}
       KEYCLOAK_BASE_URL: ${KEYCLOAK_BASE_URL:-http://keycloak:8080}
       KEYCLOAK_JWKS_CACHE_TTL: ${KEYCLOAK_JWKS_CACHE_TTL:-3600}
       REALM_MAPPING_CACHE_TTL: ${REALM_MAPPING_CACHE_TTL:-3600}
@@ -99,6 +101,7 @@ services:
     networks: *common-networks
     depends_on:
       - testcase-manager
+      - requirement-service
       - iam-service
       - keycloak
     healthcheck:
@@ -108,12 +111,73 @@ services:
       retries: 3
       start_period: 30s
 
+  playwright-mcp:
+    image: ${PLAYWRIGHT_MCP_IMAGE:-mcr.microsoft.com/playwright/mcp}
+    container_name: playwright-mcp
+    init: true
+    user: "0:0"
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        mkdir -p /tmp/playwright-output
+        chown node:node /tmp/playwright-output
+        exec runuser -u node -- node /app/cli.js --headless --browser chromium --no-sandbox --host 0.0.0.0 --port 8108 --allowed-hosts '*' --codegen typescript --isolated --output-dir /tmp/playwright-output
+    environment:
+      NODE_ENV: production
+    volumes:
+      - playwright_mcp_output:/tmp/playwright-output
+    expose:
+      - "8108"
+    networks: *common-networks
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:8108/sse').then(r=>process.exit(r.status<500?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+
+  # LiteLLM gateway. Model ids are in litellm/config.standalone.yaml.
+  # LLM_API_KEY and MULTIMODAL_API_KEY are provider keys from .env.
+  litellm:
+    image: ghcr.io/berriai/litellm:main-stable
+    container_name: litellm
+    ports:
+      - "${LITELLM_PORT:-4000}:4000"
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    environment:
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-sk-litellm-local}
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/litellm
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      MULTIMODAL_API_KEY: ${MULTIMODAL_API_KEY:-}
+    volumes:
+      - ./litellm/config.standalone.yaml:/app/config.yaml:ro
+      - litellm_data:/data
+    user: "0:0"
+    networks: *common-networks
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:4000/health/liveliness', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
   llm-service:
     image: aiqualitica/aiqualitica:llm-service-arm
     pull_policy: if_not_present
     container_name: llm-service
     ports:
-      - "${LLM_SERVICE_PORT:-8002}:8000"
+      - "${LLM_SERVICE_PORT:-8006}:8000"
     environment:
       <<: *common-env
       PYTHONDONTWRITEBYTECODE: 1
@@ -129,7 +193,7 @@ services:
       GRAPH_DB_URL: bolt://neo4j:7687
       GRAPH_DB_BOLT_URL: bolt://neo4j:7687
       DATABASE_URL: postgresql+asyncpg://postgres:password@postgres:5432/testcase_db
-      POSTGRES_USER: postgres
+      POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: password
       POSTGRES_DB: testcase_db
       REDIS_HOST: redis
@@ -137,12 +201,18 @@ services:
       GRAPH_DB_USER: neo4j
       GRAPH_DB_PASSWORD: password
       CHROMA_HOST: weaviate
+      EMBEDDING_MODEL: BAAI/bge-large-en-v1.5
+      EMBEDDING_MODEL_PATH: /app/models/bge-large-en-v1.5
+      EMBEDDING_DIMENSION: "1024"
+      OPENAI_BASE_URL: http://litellm:4000/v1
+      LLM_API_KEY: ${LITELLM_MASTER_KEY:-sk-litellm-local}
     volumes:
       - models_volume:/app/models
     networks: *common-networks
     depends_on:
       - weaviate
       - neo4j
+      - litellm
 
   testcase-db-service:
     image: aiqualitica/aiqualitica:testcase-db-service-arm
@@ -168,9 +238,17 @@ services:
       <<: *common-env
       LOG_FILE: ${LOG_FILE:-/var/log/tcm-integrator-service.log}
       EXTERNAL_SERVICE_TIMEOUT: ${EXTERNAL_SERVICE_TIMEOUT:-30}
+      CONTEXTFORGE_URL: ${CONTEXTFORGE_URL:-http://contextforge:4444}
+      CONTEXTFORGE_PUBLIC_URL: ${CONTEXTFORGE_PUBLIC_URL:-http://localhost:4444}
+      CONTEXTFORGE_SERVICE_TOKEN: ${CONTEXTFORGE_SERVICE_TOKEN:-}
+      CONTEXTFORGE_ADMIN_EMAIL: ${CONTEXTFORGE_ADMIN_EMAIL}
+      CONTEXTFORGE_ADMIN_PASSWORD: ${CONTEXTFORGE_ADMIN_PASSWORD}
+      REDIS_URL: ${TCM_REDIS_URL:-redis://redis:6379/3}
     networks: *common-networks
     depends_on:
       - testcase-db-service
+      - redis
+      - contextforge
 
   iam-service:
     image: aiqualitica/aiqualitica:iam-service-arm
@@ -181,9 +259,10 @@ services:
     environment:
       <<: *common-env
       LOG_FILE: /var/log/iam-service.log
-      JWT_SECRET: ${JWT_SECRET:-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}
+      JWT_SECRET: ${JWT_SECRET}
       JWT_ISSUER: iam.testcase-platform
       JWT_AUDIENCE: testcase-platform
+      # Matches Keycloak accessTokenLifespan set by iam-service on realm create (30 min)
       JWT_TTL_SECONDS: 1800
       JWT_LEEWAY_SECONDS: 30
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
@@ -195,9 +274,9 @@ services:
       KEYCLOAK_PUBLIC_URL: ${KEYCLOAK_PUBLIC_URL:-http://localhost:8090}
       KEYCLOAK_ADMIN_REALM: ${KEYCLOAK_ADMIN_REALM:-master}
       KEYCLOAK_ADMIN_CLIENT_ID: ${KEYCLOAK_ADMIN_CLIENT_ID:-admin-cli}
-      KEYCLOAK_ADMIN_CLIENT_SECRET: ${KEYCLOAK_ADMIN_CLIENT_SECRET:-}
-      KEYCLOAK_ADMIN_USERNAME: ${KEYCLOAK_ADMIN_USERNAME:-admin}
-      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
+      KEYCLOAK_ADMIN_CLIENT_SECRET: ${KEYCLOAK_ADMIN_CLIENT_SECRET}
+      KEYCLOAK_ADMIN_USERNAME: ${KEYCLOAK_ADMIN_USERNAME}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
       KEYCLOAK_DEFAULT_UI_CLIENT_ID: ${KEYCLOAK_DEFAULT_UI_CLIENT_ID:-aiqualitica-ui}
       KEYCLOAK_DEFAULT_API_CLIENT_ID: ${KEYCLOAK_DEFAULT_API_CLIENT_ID:-aiqualitica-api}
       KEYCLOAK_CLIENT_ROOT_URL: ${KEYCLOAK_CLIENT_ROOT_URL:-http://localhost}
@@ -217,30 +296,83 @@ services:
     environment:
       <<: *common-env
       LOG_FILE: ${LOG_FILE:-/var/log/requirement-service.log}
-      EVENT_QUEUE_URL: http://event-queue-manager:8001
       DB_SERVICE_URL: http://testcase-db-service:8000
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      CONTEXTFORGE_SERVICE_TOKEN: ${CONTEXTFORGE_SERVICE_TOKEN:-}
     networks: *common-networks
+    depends_on:
+      - redis
+      - testcase-db-service
+      - llm-service
+
+  testcase-automation-service:
+    image: aiqualitica/aiqualitica:testcase-automation-service-arm
+    pull_policy: if_not_present
+    container_name: testcase-automation-service
+    ports:
+      - "${TESTCASE_AUTOMATION_SERVICE_PORT:-8010}:8000"
+    environment:
+      <<: *common-env
+      LOG_FILE: ${LOG_FILE:-/var/log/testcase-automation-service.log}
+      TESTCASE_MANAGER_URL: http://testcase-manager:8000
+      ARTIFACT_ROOT: /artifacts
+    volumes:
+      - automation_artifacts:/artifacts
+    networks: *common-networks
+    depends_on:
+      - testcase-db-service
+      - testcase-manager
+      - llm-service
+      - event-queue-manager
+
+  automation-execution-worker:
+    image: aiqualitica/aiqualitica:automation-execution-worker-arm
+    pull_policy: if_not_present
+    container_name: automation-execution-worker
+    environment:
+      <<: *common-env
+      LOG_FILE: ${LOG_FILE:-/var/log/automation-execution-worker.log}
+      TESTCASE_AUTOMATION_SERVICE_URL: http://testcase-automation-service:8000
+      LLM_SERVICE_URL: http://llm-service:8000
+      ARTIFACT_ROOT: /artifacts
+      PLAYWRIGHT_HEADLESS: "true"
+    volumes:
+      - automation_artifacts:/artifacts
+    networks: *common-networks
+    depends_on:
+      - testcase-automation-service
+      - event-queue-manager
+      - llm-service
 
   document-preprocessor:
     image: aiqualitica/aiqualitica:document-preprocessor-arm
     pull_policy: if_not_present
     container_name: document-preprocessor
     ports:
-      - "${DOCUMENT_PREPROCESSOR_PORT:-8008}:8000"
+      - "${DOCUMENT_PREPROCESSOR_PORT:-8002}:8000"
     environment:
       <<: *common-env
       LOG_FILE: ${LOG_FILE:-/var/log/document-preprocessor.log}
       LLM_SERVICE_TIMEOUT: ${LLM_SERVICE_TIMEOUT:-600}
+      CONTEXTFORGE_SERVICE_TOKEN: ${CONTEXTFORGE_SERVICE_TOKEN:-}
+      CONTEXTFORGE_ADMIN_EMAIL: ${CONTEXTFORGE_ADMIN_EMAIL:-admin@aiqualitica.local}
+      CONTEXTFORGE_ADMIN_PASSWORD: ${CONTEXTFORGE_ADMIN_PASSWORD:-ChangeMe1!}
+      A2A_ENDPOINT_URL: ${A2A_ENDPOINT_URL:-http://document-preprocessor:8000/a2a/confluence-fetch/}
     volumes:
       - uploads_volume:/app/uploads
     networks: *common-networks
+    depends_on:
+      - contextforge
+      - event-queue-manager
+      - requirement-service
 
   event-queue-manager:
     image: aiqualitica/aiqualitica:event-queue-manager-arm
     pull_policy: if_not_present
     container_name: event-queue-manager
     ports:
-      - "${EVENT_QUEUE_MANAGER_PORT:-8006}:8001"
+      - "${EVENT_QUEUE_MANAGER_PORT:-8008}:8001"
     environment:
       <<: *common-env
       LOG_FILE: ${LOG_FILE:-/var/log/event-queue-manager.log}
@@ -285,7 +417,7 @@ services:
     image: postgres:15
     environment:
       - POSTGRES_DB=testcase_db
-      - POSTGRES_USER=postgres
+      - POSTGRES_USER=${POSTGRES_USER}
       - POSTGRES_PASSWORD=password
     volumes:
       - postgres_data:/var/lib/postgresql/data
@@ -318,6 +450,59 @@ services:
       - "6379:6379"
     networks: *common-networks
 
+  # Official ContextForge — outbound MCP connector for 3rd-party MCP servers.
+  # Agents will call this as an MCP client. Does not replace custom mcp-gateway (HIL).
+  # Admin UI: http://localhost:4444/admin
+  contextforge:
+    image: ${CONTEXTFORGE_IMAGE:-ghcr.io/ibm/mcp-context-forge:latest}
+    container_name: contextforge
+    ports:
+      - "${CONTEXTFORGE_PORT:-4444}:4444"
+    environment:
+      HOST: "0.0.0.0"
+      PORT: "4444"
+      MCPGATEWAY_UI_ENABLED: "true"
+      MCPGATEWAY_ADMIN_API_ENABLED: "true"
+      AUTH_REQUIRED: "true"
+      JWT_SECRET_KEY: ${CONTEXTFORGE_JWT_SECRET_KEY:-}
+      AUTH_ENCRYPTION_SECRET: ${AUTH_ENCRYPTION_SECRET:-}
+      PLATFORM_ADMIN_EMAIL: ${CONTEXTFORGE_ADMIN_EMAIL}
+      PLATFORM_ADMIN_PASSWORD: ${CONTEXTFORGE_ADMIN_PASSWORD}
+      PLATFORM_ADMIN_FULL_NAME: ${CONTEXTFORGE_ADMIN_FULL_NAME:-AIQualitica ContextForge Admin}
+      DATABASE_URL: ${CONTEXTFORGE_DATABASE_URL:-sqlite:////data/mcp.db}
+      REDIS_URL: ${CONTEXTFORGE_REDIS_URL:-redis://redis:6379/2}
+      CACHE_TYPE: ${CONTEXTFORGE_CACHE_TYPE:-redis}
+      RATE_LIMITING_REDIS_ENABLED: "true"
+      GUNICORN_WORKERS: ${CONTEXTFORGE_GUNICORN_WORKERS:-1}
+      GUNICORN_PRELOAD_APP: "false"
+      SECURE_COOKIES: "false"
+      PASSWORD_MIN_LENGTH_USER: "12"
+      PASSWORD_MIN_LENGTH_PRIVILEGED: "12"
+      APP_DOMAIN: ${CONTEXTFORGE_APP_DOMAIN:-http://localhost:4444}
+      CSRF_TRUSTED_ORIGINS: ${CONTEXTFORGE_CSRF_TRUSTED_ORIGINS:-["http://localhost","http://localhost:80","http://localhost:4444"]}
+      ALLOWED_ORIGINS: ${CONTEXTFORGE_ALLOWED_ORIGINS:-["http://localhost","http://localhost:80","http://localhost:4444"]}
+      PYTHONUNBUFFERED: "1"
+      SSRF_PROTECTION_ENABLED: "true"
+      SSRF_ALLOW_PRIVATE_NETWORKS: "true"
+      SSRF_ALLOW_LOCALHOST: "true"
+      SSRF_DNS_FAIL_CLOSED: "false"
+      MCPGATEWAY_A2A_ENABLED: "true"
+      MCPGATEWAY_A2A_DEFAULT_TIMEOUT: "180"
+      ENABLE_HEADER_PASSTHROUGH: "true"
+    volumes:
+      - contextforge_data:/data
+    user: "0:0"
+    networks: *common-networks
+    depends_on:
+      - redis
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:4444/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
   weaviate:
     image: semitechnologies/weaviate:latest
     ports:
@@ -348,12 +533,12 @@ services:
     container_name: keycloak
     command: start-dev
     environment:
-      - KEYCLOAK_ADMIN=admin
-      - KEYCLOAK_ADMIN_PASSWORD=${KEYCLOAK_ADMIN_PASSWORD:-admin}
+      - KEYCLOAK_ADMIN=${KEYCLOAK_ADMIN_USERNAME}
+      - KEYCLOAK_ADMIN_PASSWORD=${KEYCLOAK_ADMIN_PASSWORD}
       - KC_DB=postgres
       - KC_DB_URL=jdbc:postgresql://postgres:5432/keycloak
-      - KC_DB_USERNAME=postgres
-      - KC_DB_PASSWORD=password
+      - KC_DB_USERNAME=${POSTGRES_USER}
+      - KC_DB_PASSWORD=${POSTGRES_PASSWORD}
       - KC_HOSTNAME_STRICT=false
       - KC_HOSTNAME_STRICT_HTTPS=false
       - KC_HTTP_ENABLED=true
@@ -386,8 +571,8 @@ services:
     container_name: keycloak-one-time-setup
     environment:
       - KEYCLOAK_BASE_URL=http://keycloak:8080
-      - KEYCLOAK_ADMIN_USERNAME=${KEYCLOAK_ADMIN_USERNAME:-admin}
-      - KEYCLOAK_ADMIN_PASSWORD=${KEYCLOAK_ADMIN_PASSWORD:-admin}
+      - KEYCLOAK_ADMIN_USERNAME=${KEYCLOAK_ADMIN_USERNAME}
+      - KEYCLOAK_ADMIN_PASSWORD=${KEYCLOAK_ADMIN_PASSWORD}
       - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}
       - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET:-}
     volumes:
@@ -413,6 +598,10 @@ volumes:
   weaviate_data:
   uploads_volume:
   models_volume:
+  contextforge_data:
+  litellm_data:
+  playwright_mcp_output:
+  automation_artifacts:
 
 networks:
   testcase-network:

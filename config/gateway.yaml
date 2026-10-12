@@ -1,0 +1,27 @@
+servers:
+  - id: testcase_manager
+    url: "http://testcase-manager:8000/mcp"
+    type: http
+    protocol: mcp
+    forward_headers: ["authorization", "x-user-id", "x-tenant-id", "x-user-email", "x-user-roles"]
+  - id: requirement_service
+    url: "http://requirement-service:8000/mcp"
+    type: http
+    protocol: mcp
+    forward_headers: ["authorization", "x-user-id", "x-tenant-id", "x-user-email", "x-user-roles"]
+
+auth:
+  jwt:
+    enabled: true
+    algorithm: HS256
+    # Must be the same value as JWT_SECRET in .env. Do not commit a real secret.
+    secret_key: "replace-with-jwt-secret"
+    expected_issuer: "iam.testcase-platform"
+    expected_audience: "testcase-platform"
+    passthrough_claims: true
+
+transport:
+  web:
+    websocket_path: "/ws"
+    sse_path: "/events"
+    http_path: "/api"
